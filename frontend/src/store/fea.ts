@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import type { FEAModel, FEAResult, LoadCase, Load } from '../types';
 import {
   solve as feaSolve,
@@ -9,8 +9,53 @@ import {
   jetColormap,
 } from '../utils/fea-solver';
 
+const STORAGE_KEY = 'fea-load-cases-v1';
+
+interface PresetLoadCases {
+  loadCases: LoadCase[];
+  activeLoadCaseId: string | null;
+}
+
+interface StoredData {
+  [preset: string]: PresetLoadCases;
+}
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+function loadStoredData(): StoredData {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as StoredData;
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredData(data: StoredData) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function savePresetToStorage(preset: string, loadCases: LoadCase[], activeId: string | null) {
+  const data = loadStoredData();
+  data[preset] = {
+    loadCases: JSON.parse(JSON.stringify(loadCases)),
+    activeLoadCaseId: activeId,
+  };
+  saveStoredData(data);
+}
+
+function loadPresetFromStorage(preset: string): PresetLoadCases | null {
+  const data = loadStoredData();
+  const presetData = data[preset];
+  if (!presetData || !Array.isArray(presetData.loadCases)) return null;
+  return presetData;
 }
 
 export const useFEAStore = defineStore('fea', () => {
@@ -25,8 +70,11 @@ export const useFEAStore = defineStore('fea', () => {
   const loadCases = ref<LoadCase[]>([]);
   const activeLoadCaseId = ref<string | null>(null);
 
+  let isLoadingFromStorage = false;
+
   // ─── Actions ──────────────────────────────────────────────────────────────
   function loadPreset(name: string) {
+    isLoadingFromStorage = true;
     selectedPreset.value = name;
     result.value = null;
     selectedElement.value = null;
@@ -46,19 +94,36 @@ export const useFEAStore = defineStore('fea', () => {
     }
     model.value = presetModel;
 
-    loadCases.value = [];
-    if (presetModel.loads.length > 0) {
-      const defaultCase: LoadCase = {
-        id: generateId(),
-        name: '默认工况',
-        description: name + ' 初始载荷',
-        loads: JSON.parse(JSON.stringify(presetModel.loads)),
-      };
-      loadCases.value.push(defaultCase);
-      activeLoadCaseId.value = defaultCase.id;
+    const stored = loadPresetFromStorage(name);
+    if (stored && stored.loadCases.length > 0) {
+      loadCases.value = JSON.parse(JSON.stringify(stored.loadCases));
+      activeLoadCaseId.value = stored.activeLoadCaseId;
+      const activeCase = loadCases.value.find((c) => c.id === stored.activeLoadCaseId);
+      if (activeCase) {
+        model.value.loads = JSON.parse(JSON.stringify(activeCase.loads));
+      } else {
+        model.value.loads = [];
+      }
     } else {
-      activeLoadCaseId.value = null;
+      loadCases.value = [];
+      if (presetModel.loads.length > 0) {
+        const defaultCase: LoadCase = {
+          id: generateId(),
+          name: '默认工况',
+          description: name + ' 初始载荷',
+          loads: JSON.parse(JSON.stringify(presetModel.loads)),
+        };
+        loadCases.value.push(defaultCase);
+        activeLoadCaseId.value = defaultCase.id;
+      } else {
+        activeLoadCaseId.value = null;
+      }
+      savePresetToStorage(name, loadCases.value, activeLoadCaseId.value);
     }
+
+    setTimeout(() => {
+      isLoadingFromStorage = false;
+    }, 0);
   }
 
   function solve() {
@@ -245,6 +310,56 @@ export const useFEAStore = defineStore('fea', () => {
     return colors;
   });
 
+  // ─── Persistence ─────────────────────────────────────────────────────────
+  watch(
+    [loadCases, activeLoadCaseId, selectedPreset],
+    () => {
+      if (isLoadingFromStorage) return;
+      savePresetToStorage(
+        selectedPreset.value,
+        loadCases.value,
+        activeLoadCaseId.value
+      );
+    },
+    { deep: true }
+  );
+
+  function resetLoadCases() {
+    const name = selectedPreset.value;
+    let presetModel: FEAModel;
+    switch (name) {
+      case 'cantilever':
+        presetModel = presetCantileverBeam();
+        break;
+      case 'bridge':
+        presetModel = presetBridgeTruss();
+        break;
+      case 'frame':
+        presetModel = presetSimpleFrame();
+        break;
+      default:
+        presetModel = presetCantileverBeam();
+    }
+
+    loadCases.value = [];
+    if (presetModel.loads.length > 0) {
+      const defaultCase: LoadCase = {
+        id: generateId(),
+        name: '默认工况',
+        description: name + ' 初始载荷',
+        loads: JSON.parse(JSON.stringify(presetModel.loads)),
+      };
+      loadCases.value.push(defaultCase);
+      activeLoadCaseId.value = defaultCase.id;
+      model.value.loads = JSON.parse(JSON.stringify(defaultCase.loads));
+    } else {
+      activeLoadCaseId.value = null;
+      model.value.loads = [];
+    }
+    result.value = null;
+    savePresetToStorage(name, loadCases.value, activeLoadCaseId.value);
+  }
+
   return {
     model,
     result,
@@ -278,5 +393,6 @@ export const useFEAStore = defineStore('fea', () => {
     removeNodeLoad,
     batchSetLoads,
     clearAllLoads,
+    resetLoadCases,
   };
 });

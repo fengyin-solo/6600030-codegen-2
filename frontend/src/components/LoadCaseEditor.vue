@@ -107,6 +107,13 @@ function handleClearLoads() {
   store.saveActiveLoadCase();
 }
 
+function handleResetLoadCases() {
+  if (confirm('确定要重置所有工况吗？这将清除所有自定义工况并恢复默认工况。')) {
+    store.resetLoadCases();
+    selectedNodeIds.value = new Set();
+  }
+}
+
 watch(
   () => store.activeLoadCaseId,
   () => {
@@ -198,6 +205,15 @@ watch(
         新建
       </button>
     </div>
+
+    <!-- Reset button -->
+    <button
+      @click="handleResetLoadCases"
+      class="w-full py-1.5 rounded text-[11px] text-slate-400 hover:text-amber-300 hover:bg-slate-700/50 border border-dashed border-slate-700 hover:border-amber-600/50 transition"
+      title="将当前预设的所有工况重置为默认状态"
+    >
+      🔄 重置为默认工况
+    </button>
 
     <!-- Active case editor -->
     <div v-if="activeCase" class="border-t border-slate-700 pt-3 space-y-3">
