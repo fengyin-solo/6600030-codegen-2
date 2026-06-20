@@ -3,6 +3,7 @@ import { onMounted } from 'vue';
 import FEACanvas from './components/FEACanvas.vue';
 import ElementInfo from './components/ElementInfo.vue';
 import MeshControls from './components/MeshControls.vue';
+import LoadCaseEditor from './components/LoadCaseEditor.vue';
 import { useFEAStore } from './store/fea';
 
 const store = useFEAStore();
@@ -19,9 +20,20 @@ onMounted(() => {
       <h1 class="text-lg font-bold text-purple-400">
         🔬 有限元应力热力图可视化
       </h1>
-      <div class="text-xs text-slate-500">
-        节点: {{ store.model.nodes.length }} |
-        单元: {{ store.model.elements.length }}
+      <div class="text-xs text-slate-500 flex items-center gap-4">
+        <span v-if="store.activeLoadCase">
+          当前工况:
+          <span class="text-sky-400 font-medium">
+            {{ store.activeLoadCase.name }}
+          </span>
+          <span class="text-slate-600 ml-1">
+            ({{ store.model.loads.length }} 载荷)
+          </span>
+        </span>
+        <span>
+          节点: {{ store.model.nodes.length }} |
+          单元: {{ store.model.elements.length }}
+        </span>
       </div>
     </header>
 
@@ -35,6 +47,7 @@ onMounted(() => {
       <!-- Right sidebar -->
       <div class="w-[25%] min-w-[260px] bg-slate-900 border-l border-slate-800 p-3 flex flex-col gap-3 overflow-y-auto">
         <MeshControls />
+        <LoadCaseEditor />
         <ElementInfo />
       </div>
     </div>
@@ -58,6 +71,9 @@ onMounted(() => {
       </span>
       <span>
         单元数: <span class="text-slate-200">{{ store.model.elements.length }}</span>
+      </span>
+      <span>
+        载荷数: <span class="text-slate-200">{{ store.model.loads.length }}</span>
       </span>
       <span class="ml-auto text-slate-600">
         热力图: {{ store.heatmapMode }}

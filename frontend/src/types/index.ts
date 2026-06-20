@@ -23,6 +23,13 @@ export interface Load {
   fy: number;   // force Y component (N)
 }
 
+export interface LoadCase {
+  id: string;
+  name: string;
+  description: string;
+  loads: Load[];
+}
+
 export interface FEAModel {
   nodes: Node[];
   elements: Element[];

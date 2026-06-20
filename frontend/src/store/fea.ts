@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { FEAModel, FEAResult } from '../types';
+import type { FEAModel, FEAResult, LoadCase, Load } from '../types';
 import {
   solve as feaSolve,
   presetCantileverBeam,
@@ -8,6 +8,10 @@ import {
   presetSimpleFrame,
   jetColormap,
 } from '../utils/fea-solver';
+
+function generateId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 export const useFEAStore = defineStore('fea', () => {
   const model = ref<FEAModel>({ nodes: [], elements: [], loads: [] });
@@ -18,23 +22,42 @@ export const useFEAStore = defineStore('fea', () => {
   const selectedElement = ref<number | null>(null);
   const heatmapMode = ref<'stress' | 'strain' | 'force'>('stress');
 
+  const loadCases = ref<LoadCase[]>([]);
+  const activeLoadCaseId = ref<string | null>(null);
+
   // ─── Actions ──────────────────────────────────────────────────────────────
   function loadPreset(name: string) {
     selectedPreset.value = name;
     result.value = null;
     selectedElement.value = null;
+    let presetModel: FEAModel;
     switch (name) {
       case 'cantilever':
-        model.value = presetCantileverBeam();
+        presetModel = presetCantileverBeam();
         break;
       case 'bridge':
-        model.value = presetBridgeTruss();
+        presetModel = presetBridgeTruss();
         break;
       case 'frame':
-        model.value = presetSimpleFrame();
+        presetModel = presetSimpleFrame();
         break;
       default:
-        model.value = presetCantileverBeam();
+        presetModel = presetCantileverBeam();
+    }
+    model.value = presetModel;
+
+    loadCases.value = [];
+    if (presetModel.loads.length > 0) {
+      const defaultCase: LoadCase = {
+        id: generateId(),
+        name: '默认工况',
+        description: name + ' 初始载荷',
+        loads: JSON.parse(JSON.stringify(presetModel.loads)),
+      };
+      loadCases.value.push(defaultCase);
+      activeLoadCaseId.value = defaultCase.id;
+    } else {
+      activeLoadCaseId.value = null;
     }
   }
 
@@ -63,7 +86,119 @@ export const useFEAStore = defineStore('fea', () => {
     if (node) node.fixed = !node.fixed;
   }
 
+  function createLoadCase(name: string, description: string = '') {
+    const newCase: LoadCase = {
+      id: generateId(),
+      name,
+      description,
+      loads: [],
+    };
+    loadCases.value.push(newCase);
+    activeLoadCaseId.value = newCase.id;
+    model.value.loads = [];
+    result.value = null;
+    return newCase;
+  }
+
+  function deleteLoadCase(id: string) {
+    const idx = loadCases.value.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    loadCases.value.splice(idx, 1);
+    if (activeLoadCaseId.value === id) {
+      if (loadCases.value.length > 0) {
+        activeLoadCaseId.value = loadCases.value[0].id;
+        applyLoadCase(activeLoadCaseId.value);
+      } else {
+        activeLoadCaseId.value = null;
+        model.value.loads = [];
+        result.value = null;
+      }
+    }
+  }
+
+  function applyLoadCase(id: string) {
+    const loadCase = loadCases.value.find((c) => c.id === id);
+    if (!loadCase) return;
+    activeLoadCaseId.value = id;
+    model.value.loads = JSON.parse(JSON.stringify(loadCase.loads));
+    result.value = null;
+  }
+
+  function renameLoadCase(id: string, name: string) {
+    const loadCase = loadCases.value.find((c) => c.id === id);
+    if (loadCase) loadCase.name = name;
+  }
+
+  function updateLoadCaseDescription(id: string, description: string) {
+    const loadCase = loadCases.value.find((c) => c.id === id);
+    if (loadCase) loadCase.description = description;
+  }
+
+  function saveActiveLoadCase() {
+    if (!activeLoadCaseId.value) return;
+    const loadCase = loadCases.value.find((c) => c.id === activeLoadCaseId.value);
+    if (loadCase) {
+      loadCase.loads = JSON.parse(JSON.stringify(model.value.loads));
+    }
+  }
+
+  function duplicateLoadCase(id: string) {
+    const loadCase = loadCases.value.find((c) => c.id === id);
+    if (!loadCase) return;
+    const newCase: LoadCase = {
+      id: generateId(),
+      name: loadCase.name + ' 副本',
+      description: loadCase.description,
+      loads: JSON.parse(JSON.stringify(loadCase.loads)),
+    };
+    loadCases.value.push(newCase);
+    activeLoadCaseId.value = newCase.id;
+    model.value.loads = JSON.parse(JSON.stringify(newCase.loads));
+    result.value = null;
+    return newCase;
+  }
+
+  function setNodeLoad(nodeId: number, fx: number, fy: number) {
+    const existingIdx = model.value.loads.findIndex((l) => l.nodeId === nodeId);
+    if (fx === 0 && fy === 0) {
+      if (existingIdx !== -1) model.value.loads.splice(existingIdx, 1);
+    } else {
+      if (existingIdx !== -1) {
+        model.value.loads[existingIdx] = { nodeId, fx, fy };
+      } else {
+        model.value.loads.push({ nodeId, fx, fy });
+      }
+    }
+    result.value = null;
+  }
+
+  function removeNodeLoad(nodeId: number) {
+    const idx = model.value.loads.findIndex((l) => l.nodeId === nodeId);
+    if (idx !== -1) model.value.loads.splice(idx, 1);
+    result.value = null;
+  }
+
+  function batchSetLoads(nodeIds: number[], fx: number, fy: number) {
+    for (const nodeId of nodeIds) {
+      setNodeLoad(nodeId, fx, fy);
+    }
+  }
+
+  function clearAllLoads() {
+    model.value.loads = [];
+    result.value = null;
+  }
+
   // ─── Computed ─────────────────────────────────────────────────────────────
+  const activeLoadCase = computed(() => {
+    if (!activeLoadCaseId.value) return null;
+    return loadCases.value.find((c) => c.id === activeLoadCaseId.value) || null;
+  });
+
+  const loadedNodes = computed(() => {
+    return new Set(model.value.loads.map((l) => l.nodeId));
+  });
+
   const maxStress = computed(() => {
     if (!result.value) return 0;
     return result.value.maxStress;
@@ -118,6 +253,10 @@ export const useFEAStore = defineStore('fea', () => {
     deformationScale,
     selectedElement,
     heatmapMode,
+    loadCases,
+    activeLoadCaseId,
+    activeLoadCase,
+    loadedNodes,
     maxStress,
     maxDisplacement,
     elementColors,
@@ -128,5 +267,16 @@ export const useFEAStore = defineStore('fea', () => {
     setHeatmapMode,
     addLoad,
     toggleFixed,
+    createLoadCase,
+    deleteLoadCase,
+    applyLoadCase,
+    renameLoadCase,
+    updateLoadCaseDescription,
+    saveActiveLoadCase,
+    duplicateLoadCase,
+    setNodeLoad,
+    removeNodeLoad,
+    batchSetLoads,
+    clearAllLoads,
   };
 });
